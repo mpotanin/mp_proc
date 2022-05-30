@@ -2,7 +2,7 @@ import os
 import sys
 import argparse
 import boto3
-import s2_meta
+from mp_proc import s2_meta
 import pathlib
 
 

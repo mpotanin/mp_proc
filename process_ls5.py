@@ -6,7 +6,7 @@ from common_utils import vector_operations as vop
 
 from eolearn.core import EOPatch
 from eolearn.core import EOExecutor, OverwritePermission, EOTask, EOPatch, LinearWorkflow, FeatureType
-from eolearn.io import ImportFromTiffTask, ExportToTiffTask
+from eolearn.io import ImportFromTiff, ExportToTiff
 
 from fiona.env import NullContextManager
 from sentinelhub import UtmZoneSplitter, BBox, CRS, DataCollection, UtmGridSplitter, Geometry
@@ -43,7 +43,15 @@ class L2AScene:
     BANDS = ['B1','B2','B3','B4','B5','B6','B7']
 
     @staticmethod
+    def get_scene_id_from_path (scene_full_path):
+        while scene_full_path[-1] == '\\' or scene_full_path[-1] == '/':
+            scene_full_path = scene_full_path[:-1]
+        return os.path.basename(scene_full_path)
+
+    @staticmethod
     def get_band_file(scene_full_path, band_name):
+        scene_full_path = L2AScene.get_scene_id_from_path(scene_full_path)
+
         if band_name not in L2AScene.BANDS:
             return None
 
@@ -55,10 +63,12 @@ class L2AScene:
 
     @staticmethod
     def get_pixel_quality_file (scene_full_path):
+        scene_full_path = L2AScene.get_scene_id_from_path(scene_full_path)
         return f'{os.path.basename(scene_full_path)}_QA_PIXEL.TIF'
 
     @staticmethod
     def get_cloud_mask_file (scene_full_path):
+        scene_full_path = L2AScene.get_scene_id_from_path(scene_full_path)
         return f'{os.path.basename(scene_full_path)}_SR_CLOUD_QA.TIF'
 
     @staticmethod
@@ -104,7 +114,7 @@ class LoadSceneTask(EOTask):
         patch.bbox = bbox
 
         if not skip_bands_load:
-            import_task = ImportFromTiffTask((FeatureType.DATA_TIMELESS, 'BANDS'),
+            import_task = ImportFromTiff((FeatureType.DATA_TIMELESS, 'BANDS'),
                             folder=scene_full_path,
                             image_dtype=np.float32,
                             no_data_value=0)
@@ -115,7 +125,7 @@ class LoadSceneTask(EOTask):
 
         patch_mask_bands = EOPatch()
         patch_mask_bands.bbox = bbox
-        import_task = ImportFromTiffTask((FeatureType.DATA_TIMELESS, 'BANDS'),
+        import_task = ImportFromTiff((FeatureType.DATA_TIMELESS, 'BANDS'),
                         folder=scene_full_path,
                         image_dtype=np.ushort,
                         no_data_value=1)
@@ -143,10 +153,10 @@ if __name__ == '__main__':
 
     load_task = LoadSceneTask()
     patch = load_task.execute(bbox=BBOX_RT_UTM39,
-                      scene_full_path='D:\\work\\inno\\rt\\L5\LT05_L2SP_170022_19860527_20200918_02_T1',
+                      scene_full_path='D:\\work\\inno\\rt\\L5\\LT05_L2SP_170022_19860527_20200918_02_T1',
                               skip_bands_load=True)
 
-    export_task = ExportToTiffTask(feature = (FeatureType.MASK_TIMELESS, 'IS_VALID'),
+    export_task = ExportToTiff(feature = (FeatureType.MASK_TIMELESS, 'IS_VALID'),
                                    folder = "D:\\work\\inno\\rt\\test",
                                    band_indices=[0],
                                    no_data_value=0)

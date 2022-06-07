@@ -189,6 +189,9 @@ if __name__ == '__main__':
                         help='Month start')
     parser.add_argument('-me', type=int, default=12, required=False, metavar='month end',
                         help='Month end')
+    parser.add_argument('-sf', required=False, metavar='scene filter',
+                        help='Scene filter')
+
 
     if (len(sys.argv) == 1):
         parser.print_usage()
@@ -209,12 +212,22 @@ if __name__ == '__main__':
     month_end = args.me
     max_workers = 1
 
+    scene_filter = None
+    if args.sf is not None:
+        scene_filter = list()
+        with open(args.sf) as f:
+            lines = f.read().splitlines()
+        for l in lines:
+            scene_filter.append(f'{l.split(",")[0]}_{l.split(",")[1]}')
+
 
     daily_paths = dict()
     for scene in os.listdir(input_folder):
         if not scene.startswith('LT05_L2SP'): continue
         if SceneID.year(scene,type=int) < year_start or SceneID.year(scene,type=int) > year_end : continue
         if SceneID.month(scene,type=int) < month_start or SceneID.month(scene,type=int) > month_end: continue
+        if scene_filter is not None:
+            if f'{SceneID.path_row(scene)}_{SceneID.date(scene)}' not in scene_filter: continue
 
         if f'{SceneID.date(scene)}' not in daily_paths:
             daily_paths[f'{SceneID.date(scene)}'] = list()

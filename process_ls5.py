@@ -1,5 +1,6 @@
 import os
-
+import sys
+import argparse
 import numpy as np
 from common_utils import raster_proc as rproc
 from common_utils import vector_operations as vop
@@ -106,6 +107,30 @@ class L2AScene:
         return mask
     """
 
+class IntegrateMaskTask(EOTask):
+
+    def execute(self, eopatch, *, patch_composite = None):
+        if 'VALID_COUNT' not in patch_composite.mask_timeless:
+            patch_composite.mask_timeless['VALID_COUNT'] = np.zeros(
+                    shape=eopatch.mask_timeless['IS_VALID'].shape,dtype=np.uint8)
+        patch_composite.mask_timeless['VALID_COUNT'] += eopatch.mask_timeless['IS_VALID']
+
+
+class LoadPathTask(EOTask):
+    def execute(self, bbox, scenes, skip_bands_load = False):
+
+        load_task = LoadSceneTask()
+        patch_composite = load_task.execute(bbox,scenes[0],skip_bands_load)
+
+        for i in range(1,len(scenes)):
+            patch_scene = load_task.execute(bbox,scenes[i],skip_bands_load)
+            if not skip_bands_load:
+                patch_composite.data_timeless['BANDS'] = np.where(patch_composite.mask_timeless['IS_VALID'] == 1,
+                                            patch_composite.data_timeless['BANDS'],patch_scene.data_timeless['BANDS'])
+            patch_composite.mask_timeless['IS_VALID'] |= patch_scene.mask_timeless['IS_VALID']
+
+        return patch_composite
+
 
 class LoadSceneTask(EOTask):
 
@@ -127,7 +152,7 @@ class LoadSceneTask(EOTask):
         patch_mask_bands.bbox = bbox
         import_task = ImportFromTiff((FeatureType.DATA_TIMELESS, 'BANDS'),
                         folder=scene_full_path,
-                        image_dtype=np.ushort,
+                        image_dtype=np.uint16,
                         no_data_value=1)
         import_task.execute(
             filename= [L2AScene.get_cloud_mask_file(scene_full_path), L2AScene.get_pixel_quality_file(scene_full_path)],
@@ -140,7 +165,7 @@ class LoadSceneTask(EOTask):
 
         patch.mask_timeless['IS_VALID'] = np.empty(
             shape=[cloudless_mask.shape[0],cloudless_mask.shape[1],len(L2AScene.BANDS)-1 ],
-            dtype=np.byte)
+            dtype=np.uint8)
 
         for b in range(0,patch.mask_timeless['IS_VALID'].shape[2]):
             patch.mask_timeless['IS_VALID'][:,:,b] = cloudless_mask
@@ -149,19 +174,72 @@ class LoadSceneTask(EOTask):
 
 if __name__ == '__main__':
 
+    parser = argparse.ArgumentParser(description=
+                                     (''))
+
+    parser.add_argument('-i', required=True, metavar='input folder',
+                        help='Folder with L5 L2A products')
+    parser.add_argument('-o', required=True, metavar='output file',
+                        help='Output file')
+    parser.add_argument('-ys', type=int, default=1000, required=False, metavar='year start',
+                        help='Year start')
+    parser.add_argument('-ye', type=int, default=3000, required=False, metavar='year end',
+                        help='Year end')
+    parser.add_argument('-ms', type=int, default=1, required=False, metavar='month start',
+                        help='Month start')
+    parser.add_argument('-me', type=int, default=12, required=False, metavar='month end',
+                        help='Month end')
+
+    if (len(sys.argv) == 1):
+        parser.print_usage()
+        exit(0)
+    args = parser.parse_args()
+
+
     BBOX_RT_UTM39 = BBox(((258429, 5983254), (705189, 6281784)), crs=CRS('32639'))
+    load_task = LoadPathTask()
+    integrate_mask_task = IntegrateMaskTask()
+    workflow = LinearWorkflow(load_task,integrate_mask_task)
 
-    load_task = LoadSceneTask()
-    patch = load_task.execute(bbox=BBOX_RT_UTM39,
-                      scene_full_path='D:\\work\\inno\\rt\\L5\\LT05_L2SP_170022_19860527_20200918_02_T1',
-                              skip_bands_load=True)
+    input_folder = args.i
+    output_file = args.o
+    year_start = args.ys
+    year_end = args.ye
+    month_start = args.ms
+    month_end = args.me
+    max_workers = 1
 
-    export_task = ExportToTiff(feature = (FeatureType.MASK_TIMELESS, 'IS_VALID'),
-                                   folder = "D:\\work\\inno\\rt\\test",
+
+    daily_paths = dict()
+    for scene in os.listdir(input_folder):
+        if not scene.startswith('LT05_L2SP'): continue
+        if SceneID.year(scene,type=int) < year_start or SceneID.year(scene,type=int) > year_end : continue
+        if SceneID.month(scene,type=int) < month_start or SceneID.month(scene,type=int) > month_end: continue
+
+        if f'{SceneID.date(scene)}' not in daily_paths:
+            daily_paths[f'{SceneID.date(scene)}'] = list()
+        daily_paths[f'{SceneID.date(scene)}'].append(os.path.join(input_folder,scene))
+
+    patch_composite = EOPatch()
+    patch_composite.bbox = BBOX_RT_UTM39
+
+    execution_args = []
+    for dp in daily_paths:
+        execution_args.append({
+            load_task: {'bbox': BBOX_RT_UTM39, 'scenes' : daily_paths[dp], 'skip_bands_load' : True},
+            integrate_mask_task : {'patch_composite' : patch_composite}
+        })
+
+    executor = EOExecutor(workflow, execution_args, save_logs=False)
+    executor.run(workers=max_workers, multiprocess=False)
+
+
+
+    export_task = ExportToTiff(feature = (FeatureType.MASK_TIMELESS, 'VALID_COUNT'),
+                                   folder = os.path.dirname(output_file),
                                    band_indices=[0],
                                    no_data_value=0)
-    export_task.execute(eopatch=patch,filename='mask_3.tif')
-
+    export_task.execute(eopatch=patch_composite,filename=os.path.basename(output_file))
 
 
     exit(0)

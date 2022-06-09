@@ -4,6 +4,7 @@ import argparse
 import numpy as np
 from common_utils import raster_proc as rproc
 from common_utils import vector_operations as vop
+from osgeo import gdal, osr
 
 from eolearn.core import EOPatch
 from eolearn.core import EOExecutor, OverwritePermission, EOTask, EOPatch, LinearWorkflow, FeatureType
@@ -137,42 +138,51 @@ class LoadSceneTask(EOTask):
     def execute(self, bbox, scene_full_path, skip_bands_load = False):
         patch = EOPatch()
         patch.bbox = bbox
+        output_bounds = (bbox.lower_left[0],bbox.lower_left[1],bbox.upper_right[0],bbox.upper_right[1])
+        patch_srs = osr.SpatialReference()
+        patch_srs.ImportFromEPSG(bbox.crs.epsg)
+        pixel_res = 30
+
+        pixel_width = int(0.5 + ((bbox.upper_right[0] - bbox.lower_left[0])/pixel_res))
+        pixel_height = int(0.5 + ((bbox.upper_right[1] - bbox.lower_left[1])/pixel_res))
+
 
         if not skip_bands_load:
-            import_task = ImportFromTiff((FeatureType.DATA_TIMELESS, 'BANDS'),
-                            folder=scene_full_path,
-                            image_dtype=np.float32,
-                            no_data_value=0)
-            band_files = [L2AScene.get_band_file(scene_full_path,b) for b in L2AScene.BANDS if b!='B6']
-            import_task.execute(filename=band_files, eopatch=patch)
-            patch.data_timeless['BANDS'] = L2AScene.transform_sr_values(patch.data_timeless['BANDS'])
+            patch.data_timeless['BANDS'] = np.zeros(shape=(pixel_height,pixel_width,len(L2AScene.BANDS)-1),
+                                                    dtype=np_type)
+            i = 0
+            for band in L2AScene.BANDS:
+                if band =='B6': continue
+                band_file = os.path.join(scene_full_path,L2AScene.get_band_file(scene_full_path,band))
+                patch.data_timeless['BANDS'][:,:,i] = L2AScene.transform_sr_values(
+                                rproc.open_clipped_raster_as_image(raster_file=band_file,dst_nodata=0,
+                                                                  output_bounds=output_bounds,
+                                                                  pixel_width=pixel_width,pixel_height=pixel_height,
+                                                                  dst_srs=patch_srs,resample_alg=gdal.GRA_Cubic) )
+                i+=1
 
+        mask_files = [os.path.join(scene_full_path,L2AScene.get_cloud_mask_file(scene_full_path)),
+                      os.path.join(scene_full_path, L2AScene.get_pixel_quality_file(scene_full_path))]
+        mask_imgs = list()
+        for mf in mask_files:
+            mask_imgs.append(rproc.open_clipped_raster_as_image( raster_file=mf,dst_nodata=1,
+                                output_bounds=output_bounds,pixel_width=pixel_width, pixel_height=pixel_height,
+                                dst_srs=patch_srs, resample_alg=gdal.GRA_NearestNeighbour, output_type=gdal.GDT_UInt16))
+        is_valid_mask = L2AScene.calc_valid_pixels_mask(mask_imgs[0],mask_imgs[1])
 
-        patch_mask_bands = EOPatch()
-        patch_mask_bands.bbox = bbox
-        import_task = ImportFromTiff((FeatureType.DATA_TIMELESS, 'BANDS'),
-                        folder=scene_full_path,
-                        image_dtype=np.uint16,
-                        no_data_value=1)
-        import_task.execute(
-            filename= [L2AScene.get_cloud_mask_file(scene_full_path), L2AScene.get_pixel_quality_file(scene_full_path)],
-            eopatch=patch_mask_bands )
-
-        cloudless_mask = L2AScene.calc_valid_pixels_mask(patch_mask_bands.data_timeless['BANDS'][:,:,0],
-                                                         patch_mask_bands.data_timeless['BANDS'][:,:,1])
-
-        patch_mask_bands = None
-
-        patch.mask_timeless['IS_VALID'] = np.empty(
-            shape=[cloudless_mask.shape[0],cloudless_mask.shape[1],len(L2AScene.BANDS)-1 ],
-            dtype=np.uint8)
-
-        for b in range(0,patch.mask_timeless['IS_VALID'].shape[2]):
-            patch.mask_timeless['IS_VALID'][:,:,b] = cloudless_mask
+        if skip_bands_load:
+            patch.mask_timeless['IS_VALID'] = np.empty( shape=[pixel_height,pixel_width,1], dtype=np.uint8 )
+            patch.mask_timeless['IS_VALID'][:,:,0] = is_valid_mask
+        else:
+            patch.mask_timeless['IS_VALID'] = np.empty(
+                                                shape=[pixel_height,pixel_width,len(L2AScene.BANDS)-1 ],dtype=np.uint8)
+            for b in range(0,patch.mask_timeless['IS_VALID'].shape[2]):
+                patch.mask_timeless['IS_VALID'][:,:,b] = is_valid_mask
 
         return patch
 
 if __name__ == '__main__':
+
 
     parser = argparse.ArgumentParser(description=
                                      (''))
@@ -246,13 +256,10 @@ if __name__ == '__main__':
     executor = EOExecutor(workflow, execution_args, save_logs=False)
     executor.run(workers=max_workers, multiprocess=False)
 
-
-
     export_task = ExportToTiff(feature = (FeatureType.MASK_TIMELESS, 'VALID_COUNT'),
                                    folder = os.path.dirname(output_file),
                                    band_indices=[0],
                                    no_data_value=0)
     export_task.execute(eopatch=patch_composite,filename=os.path.basename(output_file))
-
 
     exit(0)

@@ -180,9 +180,9 @@ class LoadPathTask(EOTask):
                         patch_composite.mask_timeless['IS_DATA'][:,:,0] == 1,
                         patch_composite.data_timeless['BANDS'][:,:,b],patch_scene.data_timeless['BANDS'][:,:,b]
                     )
+                patch_composite.mask_timeless['IS_DATA'] |= patch_scene.mask_timeless['IS_DATA']
+                patch_composite.mask_timeless['BRIGHT_CLOUD'] |= patch_scene.mask_timeless['BRIGHT_CLOUD']
             patch_composite.mask_timeless['IS_VALID'] |= patch_scene.mask_timeless['IS_VALID']
-            patch_composite.mask_timeless['IS_DATA'] |= patch_scene.mask_timeless['IS_DATA']
-            patch_composite.mask_timeless['BRIGHT_CLOUD'] |= patch_scene.mask_timeless['BRIGHT_CLOUD']
 
         return patch_composite
 
@@ -217,6 +217,16 @@ class LoadSceneTask(EOTask):
                                                                    output_type=gdal.GDT_UInt16)
                 )
                 i+=1
+            patch.mask_timeless['IS_DATA'] = np.empty(shape=[pixel_height, pixel_width, 1], dtype=np.uint8)
+            patch.mask_timeless['IS_DATA'][:, :, 0] = np.where(
+                (patch.data_timeless['BANDS'][:, :, 3] > 0) & (patch.data_timeless['BANDS'][:, :, 2] > 0), 1, 0
+            )
+
+            patch.mask_timeless['BRIGHT_CLOUD'] = np.empty(shape=[pixel_height, pixel_width, 1], dtype=np.uint8)
+            patch.mask_timeless['BRIGHT_CLOUD'][:, :, 0] = np.where(
+                (patch.data_timeless['BANDS'][:, :, 3] > 0.6) & (patch.data_timeless['BANDS'][:, :, 2] > 0.6), 1, 0
+            )
+
 
         mask_files = [os.path.join(scene_full_path,L2AScene.get_cloud_mask_file(scene_full_path)),
                       os.path.join(scene_full_path, L2AScene.get_pixel_quality_file(scene_full_path))]
@@ -225,17 +235,6 @@ class LoadSceneTask(EOTask):
                                 dst_srs=patch_srs, resample_alg=gdal.GRA_NearestNeighbour, output_type=gdal.GDT_UInt16)
                      for mf in mask_files]
         )
-
-        patch.mask_timeless['IS_DATA'] = np.empty( shape=[pixel_height,pixel_width,1], dtype=np.uint8 )
-        patch.mask_timeless['IS_DATA'][:,:,0] = np.where(
-            (patch.data_timeless['BANDS'][:,:,3] > 0) & (patch.data_timeless['BANDS'][:,:,2] > 0),1,0
-        )
-
-        patch.mask_timeless['BRIGHT_CLOUD'] = np.empty( shape=[pixel_height,pixel_width,1], dtype=np.uint8 )
-        patch.mask_timeless['BRIGHT_CLOUD'][:,:,0] = np.where(
-            (patch.data_timeless['BANDS'][:,:,3] > 0.6) & (patch.data_timeless['BANDS'][:,:,2] > 0.6),1,0
-        )
-
         patch.mask_timeless['IS_VALID'] = np.empty( shape=[pixel_height,pixel_width,1], dtype=np.uint8 )
         patch.mask_timeless['IS_VALID'][:,:,0] = L2AScene.calc_valid_pixels_mask(mask_imgs[0],mask_imgs[1])
 
@@ -258,20 +257,19 @@ if __name__ == '__main__':
 
     if (len(sys.argv) == 1):
         parser.print_usage()
-        #exit(0)
-    #args = parser.parse_args()
+        exit(0)
+    args = parser.parse_args()
 
-    input_folder = 'D:\\work\\inno\\rt\\L5' #args.i
-    output_file = 'D:\\work\\inno\\rt\\test\\max_ndvi.tif'#args.o
-    year_start = 1000 #args.ys
-    year_end = 3000#args.ye
-    month_start = 1#args.ms
-    month_end = 12#args.me
+    input_folder = args.i
+    output_file = args.o
+    year_start = args.ys
+    year_end = args.ye
+    month_start = args.ms
+    month_end = args.me
     max_workers = 1
-    method = 'ndvi'#args.m
+    method = args.m
     scene_filter = None
-    #if args.sf is not None:
-    if False:
+    if args.sf is not None:
         scene_filter = list()
         with open(args.sf) as f:
             lines = f.read().splitlines()

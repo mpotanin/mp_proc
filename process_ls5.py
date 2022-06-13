@@ -83,10 +83,16 @@ class L2AScene:
 
     @staticmethod
     def calc_valid_pixels_mask (cloud_qa_pixels, qa_pixels):
+        # cloud or shadow only of high confidence
+        return np.where( (qa_pixels == 1) | (qa_pixels & 768 == 768) | (qa_pixels & 3072 == 1) , 0, 1)
+
+        """
+        #cloud or shadow of any confidence
         return (
             np.where( (cloud_qa_pixels>>1 & 1 == 1) | (cloud_qa_pixels>>2 & 1 == 1) | (cloud_qa_pixels>>3 & 1 == 1), 0, 1)
             * np.where((qa_pixels == 1) | (qa_pixels>>1 & 1 == 1)  | (qa_pixels>>3 & 1 == 1) | (qa_pixels>>4 & 1 == 1),0,1)
         )
+        """
 
 
 
@@ -153,7 +159,7 @@ class CalcNDVITask(EOTask):
     def execute(self,eopatch):
         eopatch.data_timeless['NDVI'] = np.zeros(
                         shape=(eopatch.data_timeless['BANDS'].shape[0],eopatch.data_timeless['BANDS'].shape[1],1),
-                        dtype=np.float32
+                        dtype=float
         )
         eopatch.data_timeless['NDVI'][:,:,0] = rproc.calc_ndvi_as_image_from_mem(
             eopatch.data_timeless['BANDS'][:,:,2],eopatch.data_timeless['BANDS'][:,:,3]
@@ -197,7 +203,7 @@ class LoadSceneTask(EOTask):
 
         if not skip_bands_load:
             patch.data_timeless['BANDS'] = np.zeros(shape=(pixel_height,pixel_width,len(L2AScene.BANDS)-1),
-                                                    dtype=np.float32
+                                                    dtype=float
                                                     )
             i = 0
             for band in L2AScene.BANDS:
